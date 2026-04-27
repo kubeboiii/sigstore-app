@@ -1,0 +1,57 @@
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+)
+
+type HealthResponse struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+	Env     string `json:"env"`
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(HealthResponse{
+		Status:  "ok",
+		Version: "v0.0.1",
+		Env:     os.Getenv("APP_ENV"),
+	})
+}
+
+func helloHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("received request on /hello")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "hello from sigstore app!",
+	})
+}
+
+func versionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"version": "v1.0.0",
+		"app":     "sigstore-app",
+		"author":  "Himanshu",
+	})
+}
+
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/hello", helloHandler)
+	mux.HandleFunc("/version", versionHandler)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("starting server on :%s", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatal(err)
+	}
+}

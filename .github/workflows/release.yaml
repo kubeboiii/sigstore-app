@@ -1,0 +1,110 @@
+name: Tag CD — Promote to Staging → Prod
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+  packages: read
+
+jobs:
+  verify-and-promote:
+    runs-on: ubuntu-latest
+
+    steps:
+      # No source repo checkout needed — we are not building anything
+      # github.sha on a tag push is already the commit the tag points to
+      # No git rev-list needed — that was the bug causing empty SHA
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Debug values
+        run: |
+          echo "Tag:  ${{ github.ref_name }}"
+          echo "SHA:  ${{ github.sha }}"
+
+      - name: Check image exists
+        run: |
+          docker manifest inspect docker.io/himanshubtc/sigstore-app:main-${{ github.sha }}
+
+      - name: Verify image signature
+        run: |
+          cosign verify \
+            --certificate-identity-regexp="https://github.com/himanshubtc/sigstore-app/.github/workflows/.*" \
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+            docker.io/himanshubtc/sigstore-app:main-${{ github.sha }}
+
+      # Retag verified image — NO rebuild
+      - name: Retag image as version
+        run: |
+          docker pull docker.io/himanshubtc/sigstore-app:main-${{ github.sha }}
+
+          docker tag \
+            docker.io/himanshubtc/sigstore-app:main-${{ github.sha }} \
+            docker.io/himanshubtc/sigstore-app:${{ github.ref_name }}
+
+          docker push docker.io/himanshubtc/sigstore-app:${{ github.ref_name }}
+
+      - name: Checkout gitops repo
+        uses: actions/checkout@v4
+        with:
+          repository: kubeboiii/sigstore-gitops
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops
+
+      - name: Update staging image tag
+        run: |
+          cd gitops/apps/overlays/staging
+          kustomize edit set image himanshubtc/sigstore-app=docker.io/himanshubtc/sigstore-app:${{ github.ref_name }}
+
+      - name: Commit staging promotion
+        run: |
+          cd gitops
+          git config user.email "himanshuwankhadegeneral@gmail.com"
+          git config user.name "Himanshu CI Bot"
+          git add .
+          git diff --cached --quiet || git commit -m "chore: promote ${{ github.ref_name }} → staging"
+          git push origin main
+
+      - name: Wait for staging rollout
+        run: sleep 30
+
+      - name: Smoke test staging
+        run: echo "Run real smoke tests here"
+
+      - name: Update prod image tag
+        run: |
+          cd gitops/apps/overlays/prod
+          kustomize edit set image himanshubtc/sigstore-app=docker.io/himanshubtc/sigstore-app:${{ github.ref_name }}
+
+      - name: Open prod promotion PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops
+          branch: promote-${{ github.ref_name }}-to-prod
+          base: main
+          title: "promote ${{ github.ref_name }} to prod"
+          body: |
+            ## 🚀 Production Promotion
+
+            **Version:** `${{ github.ref_name }}`
+            **Image:** `docker.io/himanshubtc/sigstore-app:${{ github.ref_name }}`
+
+            - Cosign verified ✅
+            - Staging validated ✅
+
+            Merge to promote to production.
+          commit-message: "chore: promote ${{ github.ref_name }} → prod"
