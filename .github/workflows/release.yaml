@@ -42,7 +42,7 @@ jobs:
       - name: Verify image signature
         run: |
           cosign verify \
-            --certificate-identity-regexp="https://github.com/himanshubtc/sigstore-app/.github/workflows/.*" \
+            --certificate-identity-regexp="https://github.com/kubeboiii/sigstore-app/.github/workflows/.*" \
             --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
             docker.io/himanshubtc/sigstore-app:main-${{ github.sha }}
 
